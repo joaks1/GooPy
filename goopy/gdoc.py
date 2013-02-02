@@ -117,6 +117,11 @@ class GoogleSpreadsheetClient(object):
         return cell_feed.entry
 
     cells = property(_get_cells)
+
+    def _get_column_headers(self):
+        return self.rows[0].custom.keys()
+
+    column_headers = property(_get_column_headers)
         
     def _get_spreadsheet_key_by_name(self, spreadsheet_name):
         feed = self.spreadsheet_client.GetSpreadsheetsFeed()
@@ -224,4 +229,10 @@ class GoogleSpreadsheetClient(object):
 
     def update_row(self, row, replacement_dict):
         self.spreadsheet_client.UpdateRow(row, replacement_dict)
+
+    def insert_row(self, row_dict):
+        return self.spreadsheet_client.InsertRow(
+                row_dict,
+                key = self.spreadsheet_key,
+                wksht_id = self.worksheet_id)
 
