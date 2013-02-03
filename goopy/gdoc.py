@@ -3,6 +3,8 @@
 import os
 import sys
 import re
+import csv
+import gdata
 import gdata.docs
 import gdata.docs.service
 import gdata.spreadsheet
@@ -110,6 +112,12 @@ class GoogleSpreadsheetClient(object):
     
     rows = property(_get_rows)
 
+    def _get_row_dict_iter(self):
+        for row in self.rows:
+            yield dict([(k, v.text) for k, v in row.custom.iteritems()])
+
+    row_dict_iter = property(_get_row_dict_iter)
+
     def _get_cells(self):
         cell_feed = self.spreadsheet_key.GetCellsFeed(
                 key = self.spreadsheet_key,
@@ -162,20 +170,44 @@ class GoogleSpreadsheetClient(object):
                             self.spreadsheet.title.text))
         return matches[0].id.text.split('/')[-1]
 
-    def download_spreadsheet(self,
-            path, 
-            format='tsv'):
-        entry = self.spreadsheet_client.GetSpreadsheetsFeed(
-                key = self._spreadsheet_key)
-        d_token = self.doc_client.GetClientLoginToken()
-        self.doc_client.SetClientLoginToken(
-                self.spreadsheet_client.GetClientLoginToken())
-        self.doc_client.Download(
-                entry_or_id_or_url=entry,
-                file_path=path,
-                export_format=format)
-        self.doc_client.SetClientLoginToken(d_token)
+    # def download_spreadsheet(self,
+    #         path, 
+    #         format='tsv'):
+    #     entry = self.spreadsheet_client.GetSpreadsheetsFeed(
+    #             key = self._spreadsheet_key)
+    #     d_token = self.doc_client.GetClientLoginToken()
+    #     self.doc_client.SetClientLoginToken(
+    #             gdata.gauth.ClientLoginToken(
+    #                     self.spreadsheet_client.GetClientLoginToken()))
+    #             # self.spreadsheet_client.GetClientLoginToken())
+    #     self.doc_client.Download(
+    #             entry_or_id_or_url=entry,
+    #             file_path=path,
+    #             export_format=format)
+    #     self.doc_client.SetClientLoginToken(d_token)
 
+    def download_spreadsheet(self, dest, fieldnames=None, delimiter='\t'):
+        if isinstance(dest, str):
+            dest = open(dest, 'w')
+        valid_names = self.rows[0].custom.keys()
+        if not fieldnames:
+            fieldnames = valid_names
+        fnames = [self.googlize_column_header(fn) for fn in fieldnames]
+        fname_map = dict(zip(fnames, fieldnames))
+        for fn in fnames:
+            if fn not in valid_names:
+                raise ValueError('field name {0!r} ({1!r}) not in current '
+                        'spreadsheet'.format(fn, fname_map[fn]))
+        dr = csv.DictWriter(dest,
+                fieldnames = fnames,
+                restval = '',
+                extrasaction = 'ignore',
+                delimiter = delimiter,
+                lineterminator = os.linesep)
+        dr.writeheader()
+        dr.writerows(self.row_dict_iter)
+        dest.close()
+        
     def _get_doc_entry_by_name(self, doc_name):
         q = gdata.docs.service.DocumentQuery()
         q['title'] = doc_name
@@ -192,6 +224,12 @@ class GoogleSpreadsheetClient(object):
     def googlize_column_header(self, header):
         return header.lower().replace(' ', '').replace('_', '')
 
+    def googlize_row_dict(self, d):
+        new_d = {}
+        for k, v in d.iteritems():
+            new_d[self.googlize_column_header(k)] = str(v)
+        return new_d
+
     def filter_rows(self, column_headers, pattern):
         p = re.compile(pattern)
         headers = [self.googlize_column_header(x) for x in column_headers]
@@ -203,6 +241,7 @@ class GoogleSpreadsheetClient(object):
 
     def update_sheet(self, filter_headers, filter_pattern, update_header, update,
             only_update_empty_cells=False, dry_run=False):
+        new_row = None
         f_headers = [self.googlize_column_header(x) for x in filter_headers]
         u_header = self.googlize_column_header(update_header)
         for i, row in self.filter_rows(f_headers, filter_pattern):
@@ -225,14 +264,44 @@ class GoogleSpreadsheetClient(object):
                 else:
                     new_dict[col_header] = value.text
             if not dry_run and not skip:
-                self.update_row(row, new_dict) 
+                new_row = self._update_row(row, new_dict) 
+        return new_row
+
+    def update_sheet_by_row(self, filter_headers, filter_pattern, new_row_dict,
+            insert=True, dry_run=False):
+        found = False
+        new_row = None
+        f_headers = [self.googlize_column_header(x) for x in filter_headers]
+        r_dict = self.googlize_row_dict(new_row_dict)
+        for i, row in self.filter_rows(f_headers, filter_pattern):
+            found = True
+            _LOG.info('Row {0}:\n\t{1} -->\n\t{2}'.format(i,
+                ','.join([':'.join(
+                        [k,str(v.text)]) for k,v in row.custom.iteritems()]),
+                ','.join([':'.join(
+                        [k,v]) for k,v in r_dict.iteritems()])))
+            if not dry_run:
+                new_row = self._update_row(row, r_dict)
+        if not found:
+            _LOG.info('{0} not found... inserting row'.format(filter_pattern))
+            if not dry_run:
+                new_row = self._insert_row(r_dict)
+        return new_row
+
+    def _update_row(self, row, replacement_dict):
+        return self.spreadsheet_client.UpdateRow(row, replacement_dict)
 
     def update_row(self, row, replacement_dict):
-        self.spreadsheet_client.UpdateRow(row, replacement_dict)
+        r_dict = self.googlize_row_dict(replacement_dict)
+        return self._update_row(row, r_dict)
 
-    def insert_row(self, row_dict):
+    def _insert_row(self, row_dict):
         return self.spreadsheet_client.InsertRow(
                 row_dict,
                 key = self.spreadsheet_key,
                 wksht_id = self.worksheet_id)
+
+    def insert_row(self, row_dict):
+        r_dict = self.googlize_row_dict(row_dict)
+        return self._insert_row(r_dict)
 
