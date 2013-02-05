@@ -112,9 +112,18 @@ class GoogleSpreadsheetClient(object):
     
     rows = property(_get_rows)
 
+    def get_row_dict(self, row):
+        d = {}
+        for k, v in row.custom.iteritems():
+            if v.text is not None:
+                d[k] = v.text
+            else:
+                d[k] = ''
+        return d
+
     def _get_row_dict_iter(self):
         for row in self.rows:
-            yield dict([(k, v.text) for k, v in row.custom.iteritems()])
+            yield self.get_row_dict(row)
 
     row_dict_iter = property(_get_row_dict_iter)
 
@@ -227,7 +236,10 @@ class GoogleSpreadsheetClient(object):
     def googlize_row_dict(self, d):
         new_d = {}
         for k, v in d.iteritems():
-            new_d[self.googlize_column_header(k)] = str(v)
+            if v is not None:
+                new_d[self.googlize_column_header(k)] = str(v)
+            else:
+                new_d[self.googlize_column_header(k)] = ''
         return new_d
 
     def filter_rows(self, column_headers, pattern):
@@ -267,6 +279,12 @@ class GoogleSpreadsheetClient(object):
                 new_row = self._update_row(row, new_dict) 
         return new_row
 
+    def merge_row_data(self, target_row, new_row_data):
+        target = self.get_row_dict(target_row)
+        for k in (k for k in target.keys() if k not in new_row_data.keys()):
+            new_row_data[k] = target[k]
+        return new_row_data
+
     def update_sheet_by_row(self, filter_headers, filter_pattern, new_row_dict,
             insert=True, dry_run=False):
         found = False
@@ -275,6 +293,7 @@ class GoogleSpreadsheetClient(object):
         r_dict = self.googlize_row_dict(new_row_dict)
         for i, row in self.filter_rows(f_headers, filter_pattern):
             found = True
+            r_dict = self.merge_row_data(row, r_dict)
             _LOG.info('Row {0}:\n\t{1} -->\n\t{2}'.format(i,
                 ','.join([':'.join(
                         [k,str(v.text)]) for k,v in row.custom.iteritems()]),
