@@ -293,7 +293,6 @@ class GoogleSpreadsheetClient(object):
         r_dict = self.googlize_row_dict(new_row_dict)
         for i, row in self.filter_rows(f_headers, filter_pattern):
             found = True
-            r_dict = self.merge_row_data(row, r_dict)
             _LOG.info('Row {0}:\n\t{1} -->\n\t{2}'.format(i,
                 ','.join([':'.join(
                         [k,str(v.text)]) for k,v in row.custom.iteritems()]),
@@ -308,7 +307,8 @@ class GoogleSpreadsheetClient(object):
         return new_row
 
     def _update_row(self, row, replacement_dict):
-        return self.spreadsheet_client.UpdateRow(row, replacement_dict)
+        r_dict = self.merge_row_data(row, replacement_dict)
+        return self.spreadsheet_client.UpdateRow(row, r_dict)
 
     def update_row(self, row, replacement_dict):
         r_dict = self.googlize_row_dict(replacement_dict)
